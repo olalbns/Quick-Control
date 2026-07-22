@@ -93,23 +93,47 @@ def set_volume(delta: str) -> bool: return run("wpctl", "set-volume", "@DEFAULT_
 def toggle_mute(target: str) -> bool: return run("wpctl", "set-mute", target, "toggle")
 
 
-def _brightness_percent(*args: str) -> int | None:
-    text = output("brightnessctl", *args, "-m")
-    if text is None: return None
-    # brightnessctl -m emits: device,class,current,max (not a percentage).
-    # Device names may contain escaped commas, so only inspect the last fields.
-    fields = text.rsplit(",", 2)
-    if len(fields) != 3: return None
-    try:
-        current, maximum = int(fields[1]), int(fields[2])
-        return round(current * 100 / maximum) if maximum else None
-    except ValueError:
-        return None
+def brightness_devices() -> dict[str, tuple[str, int, int]]:
+    """Read all brightnessctl devices from its portable human-readable listing.
+
+    Some brightnessctl releases return a non-zero status for `-m` despite
+    printing usable data. `-l` is reliable on the user's Dell hardware and
+    also exposes both screen backlights and keyboard LEDs in one command.
+    """
+    listing = output("brightnessctl", "-l")
+    if listing is None:
+        return {}
+    devices: dict[str, tuple[str, int, int]] = {}
+    name: str | None = None
+    device_class: str | None = None
+    current: int | None = None
+    for line in listing.splitlines():
+        if "Device" in line and "of class" in line:
+            raw_name = line.split("Device", 1)[1].split("of class", 1)[0]
+            name = raw_name.strip(" `\\\"'")
+            raw_class = line.split("of class", 1)[1].rstrip(": ").strip(" `\\\"'")
+            device_class, current = raw_class, None
+        elif name and "Current brightness:" in line:
+            match = re.search(r"Current brightness:\s*(\d+)", line)
+            current = int(match.group(1)) if match else None
+        elif name and device_class and "Max brightness:" in line:
+            match = re.search(r"Max brightness:\s*(\d+)", line)
+            if match and current is not None:
+                devices[name] = (device_class, current, int(match.group(1)))
+            name, device_class, current = None, None, None
+    return devices
+
+
+def _percent(current: int, maximum: int) -> int | None:
+    return round(current * 100 / maximum) if maximum else None
 
 
 def brightness_state() -> tuple[int | None, str]:
-    level = _brightness_percent()
-    return (level, f"{level}%") if level is not None else (None, "Brightness control unavailable")
+    for _name, (device_class, current, maximum) in brightness_devices().items():
+        if device_class == "backlight":
+            level = _percent(current, maximum)
+            return (level, f"{level}%") if level is not None else (None, "Brightness control unavailable")
+    return None, "Brightness control unavailable"
 
 
 def set_brightness(percent: int) -> bool:
@@ -118,24 +142,20 @@ def set_brightness(percent: int) -> bool:
 
 def keyboard_backlight_device() -> str | None:
     """Return a keyboard-backlight LED accepted by brightnessctl, if present."""
-    devices = output("brightnessctl", "-l") or ""
-    for line in devices.splitlines():
-        # brightnessctl uses quotation marks that vary between releases/fonts.
-        # Splitting the stable parts is more reliable than matching the quote.
-        if "Device" not in line or "of class 'leds'" not in line:
-            continue
-        name = line.split("Device", 1)[1].split("of class", 1)[0].strip(" `\"'")
+    for name, (device_class, _current, _maximum) in brightness_devices().items():
         lowered = name.lower()
-        if "kbd" in lowered or "keyboard" in lowered:
+        if device_class == "leds" and ("kbd" in lowered or "keyboard" in lowered):
             return name
     return None
 
 
 def keyboard_brightness_state() -> tuple[int | None, str]:
     device = keyboard_backlight_device()
-    if not device:
+    values = brightness_devices().get(device) if device else None
+    if not values:
         return None, "Keyboard backlight unavailable"
-    level = _brightness_percent("-d", device)
+    _class, current, maximum = values
+    level = _percent(current, maximum)
     return (level, f"{level}% · {device}") if level is not None else (None, "Keyboard backlight unavailable")
 
 
