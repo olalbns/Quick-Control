@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+[project]
+name = "quick-control"
+version = "0.1.0"
+description = "Compact Linux quick control center"
+requires-python = ">=3.10"
+[project.scripts]
+quick-control = "quick_control.app:main"
+[tool.setuptools]
+packages = ["quick_control"]
+[tool.setuptools.data-files]
+"share/applications" = ["data/io.github.olalbns.quickcontrol.desktop"]
