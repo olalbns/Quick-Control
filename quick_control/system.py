@@ -96,9 +96,15 @@ def toggle_mute(target: str) -> bool: return run("wpctl", "set-mute", target, "t
 def _brightness_percent(*args: str) -> int | None:
     text = output("brightnessctl", *args, "-m")
     if text is None: return None
-    # machine output ends with e.g. 42%; commas inside device fields are escaped.
-    match = re.search(r",(\d+)%\s*$", text)
-    return int(match.group(1)) if match else None
+    # brightnessctl -m emits: device,class,current,max (not a percentage).
+    # Device names may contain escaped commas, so only inspect the last fields.
+    fields = text.rsplit(",", 2)
+    if len(fields) != 3: return None
+    try:
+        current, maximum = int(fields[1]), int(fields[2])
+        return round(current * 100 / maximum) if maximum else None
+    except ValueError:
+        return None
 
 
 def brightness_state() -> tuple[int | None, str]:
@@ -113,7 +119,12 @@ def set_brightness(percent: int) -> bool:
 def keyboard_backlight_device() -> str | None:
     """Return a keyboard-backlight LED accepted by brightnessctl, if present."""
     devices = output("brightnessctl", "-l") or ""
-    for name in re.findall(r"Device '([^']+)' of class 'leds'", devices):
+    for line in devices.splitlines():
+        # brightnessctl uses quotation marks that vary between releases/fonts.
+        # Splitting the stable parts is more reliable than matching the quote.
+        if "Device" not in line or "of class 'leds'" not in line:
+            continue
+        name = line.split("Device", 1)[1].split("of class", 1)[0].strip(" `\"'")
         lowered = name.lower()
         if "kbd" in lowered or "keyboard" in lowered:
             return name
