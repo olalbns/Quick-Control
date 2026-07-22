@@ -31,10 +31,46 @@ class Card(Gtk.Box):
         if value is not None:
             self.switch.set_state(value)
 
+class LevelCard(Gtk.Box):
+    """A slider whose commands are debounced while the user drags it."""
+    def __init__(self, title: str, icon: str, callback):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self.add_css_class("card")
+        self.callback, self.refreshing, self.pending = callback, False, 0
+        row = Gtk.Box(spacing=10)
+        glyph = Gtk.Label(label=icon); glyph.add_css_class("title-2")
+        text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, hexpand=True)
+        self.title = Gtk.Label(label=title, xalign=0)
+        self.detail = Gtk.Label(label="—", xalign=0); self.detail.add_css_class("dim-label")
+        text.append(self.title); text.append(self.detail)
+        row.append(glyph); row.append(text); self.append(row)
+        self.scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1)
+        self.scale.set_draw_value(True)
+        self.scale.connect("value-changed", self.queue_change)
+        self.append(self.scale)
+
+    def queue_change(self, scale):
+        if self.refreshing: return
+        if self.pending: GLib.source_remove(self.pending)
+        value = round(scale.get_value())
+        self.pending = GLib.timeout_add(180, self.apply_change, value)
+
+    def apply_change(self, value):
+        self.pending = 0
+        self.callback(value)
+        return False
+
+    def update(self, level: int | None, detail: str):
+        self.refreshing = True
+        self.detail.set_text(detail)
+        self.scale.set_sensitive(level is not None)
+        if level is not None: self.scale.set_value(level)
+        self.refreshing = False
+
 class Window(Gtk.ApplicationWindow):
     def __init__(self, app: Gtk.Application):
         super().__init__(application=app, title=_("Quick Control"))
-        self.set_default_size(480, 570)
+        self.set_default_size(500, 650)
         self.set_resizable(False)
         main = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14,
                        margin_top=20, margin_bottom=20, margin_start=20, margin_end=20)
@@ -49,11 +85,15 @@ class Window(Gtk.ApplicationWindow):
         self.bluetooth = Card(_("Bluetooth"), "ᛒ", self.change_bluetooth)
         self.volume = Card(_("Sound"), "🔊", self.change_volume_mute)
         self.microphone = Card(_("Microphone"), "🎙", self.change_microphone_mute)
-        self.brightness = Card(_("Brightness"), "☀", self.change_brightness)
+        self.brightness = LevelCard(_("Screen brightness"), "☀", self.change_brightness)
+        self.keyboard_brightness = LevelCard(_("Keyboard backlight"), "⌨", self.change_keyboard_brightness)
         self.battery = Card(_("Battery"), "▰", lambda _v: None)
         self.battery.switch.set_visible(False)
-        for index, card in enumerate((self.wifi, self.bluetooth, self.volume, self.microphone, self.brightness, self.battery)):
+        for index, card in enumerate((self.wifi, self.bluetooth, self.volume, self.microphone)):
             grid.attach(card, index % 2, index // 2, 1, 1)
+        grid.attach(self.brightness, 0, 2, 2, 1)
+        grid.attach(self.keyboard_brightness, 0, 3, 2, 1)
+        grid.attach(self.battery, 0, 4, 2, 1)
         actions = Gtk.Box(spacing=8, homogeneous=True, margin_top=4)
         main.append(actions)
         for text, icon, callback in ((_("Lock"), "🔒", self.do_lock), (_("Suspend"), "⏾", lambda: self.confirm("suspend")),
@@ -71,7 +111,8 @@ class Window(Gtk.ApplicationWindow):
     def change_bluetooth(self, enabled): self.action(system.set_bluetooth(enabled), _("Bluetooth updated."))
     def change_volume_mute(self, _enabled): self.action(system.toggle_mute("@DEFAULT_AUDIO_SINK@"), _("Sound updated."))
     def change_microphone_mute(self, _enabled): self.action(system.toggle_mute("@DEFAULT_AUDIO_SOURCE@"), _("Microphone updated."))
-    def change_brightness(self, enabled): self.action(system.set_brightness("+5%" if enabled else "5%-"), _("Brightness updated."))
+    def change_brightness(self, percent): self.action(system.set_brightness(percent), _("Screen brightness updated."))
+    def change_keyboard_brightness(self, percent): self.action(system.set_keyboard_brightness(percent), _("Keyboard backlight updated."))
     def do_lock(self): self.action(system.lock(), _("Session locked."))
 
     def confirm(self, action: str):
@@ -88,6 +129,7 @@ class Window(Gtk.ApplicationWindow):
         self.volume.update(*system.volume_state())
         self.microphone.update(*system.microphone_state())
         self.brightness.update(*system.brightness_state())
+        self.keyboard_brightness.update(*system.keyboard_brightness_state())
         self.battery.update(*system.battery_state())
         return True
 

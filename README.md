@@ -39,3 +39,10 @@ Ajoutez à `~/.config/hypr/hyprland.conf` :
 ```ini
 bind = SUPER, A, exec, quick-control
 ```
+
+## Luminosité écran et clavier
+
+Les deux luminosités sont contrôlées par des curseurs de 0 à 100 %. Le clavier
+est détecté automatiquement parmi les périphériques LED de `brightnessctl`
+(noms contenant `kbd` ou `keyboard`, par exemple `asus::kbd_backlight`). Si le
+clavier ne possède pas de rétroéclairage compatible, son curseur est désactivé.

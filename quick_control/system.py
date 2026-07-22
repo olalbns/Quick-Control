@@ -93,14 +93,44 @@ def set_volume(delta: str) -> bool: return run("wpctl", "set-volume", "@DEFAULT_
 def toggle_mute(target: str) -> bool: return run("wpctl", "set-mute", target, "toggle")
 
 
-def brightness_state() -> tuple[bool | None, str]:
-    text = output("brightnessctl", "-m")
-    if text is None: return None, "Brightness control unavailable"
+def _brightness_percent(*args: str) -> int | None:
+    text = output("brightnessctl", *args, "-m")
+    if text is None: return None
     # machine output ends with e.g. 42%; commas inside device fields are escaped.
     match = re.search(r",(\d+)%\s*$", text)
-    return (True, f"{match.group(1)}%") if match else (None, "Unavailable")
+    return int(match.group(1)) if match else None
 
-def set_brightness(delta: str) -> bool: return run("brightnessctl", "set", delta)
+
+def brightness_state() -> tuple[int | None, str]:
+    level = _brightness_percent()
+    return (level, f"{level}%") if level is not None else (None, "Brightness control unavailable")
+
+
+def set_brightness(percent: int) -> bool:
+    return run("brightnessctl", "set", f"{max(0, min(100, percent))}%")
+
+
+def keyboard_backlight_device() -> str | None:
+    """Return a keyboard-backlight LED accepted by brightnessctl, if present."""
+    devices = output("brightnessctl", "-l") or ""
+    for name in re.findall(r"Device '([^']+)' of class 'leds'", devices):
+        lowered = name.lower()
+        if "kbd" in lowered or "keyboard" in lowered:
+            return name
+    return None
+
+
+def keyboard_brightness_state() -> tuple[int | None, str]:
+    device = keyboard_backlight_device()
+    if not device:
+        return None, "Keyboard backlight unavailable"
+    level = _brightness_percent("-d", device)
+    return (level, f"{level}% · {device}") if level is not None else (None, "Keyboard backlight unavailable")
+
+
+def set_keyboard_brightness(percent: int) -> bool:
+    device = keyboard_backlight_device()
+    return bool(device) and run("brightnessctl", "-d", device, "set", f"{max(0, min(100, percent))}%")
 
 
 def battery_state() -> tuple[bool | None, str]:
